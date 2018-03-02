@@ -560,7 +560,6 @@ static const char *help_msg_ax[] = {
 	"axF", " [flg-glob]", "find data/code references of flags",
 	"axt", " [addr]", "find data/code references to this address",
 	"axf", " [addr]", "find data/code references from this address",
-	"axk", " [query]", "perform sdb query",
 	"ax*", "", "output radare commands",
 	NULL
 };
@@ -4998,15 +4997,6 @@ static bool cmd_anal_refs(RCore *core, const char *input) {
 			Sdb *db = sdb_new0 ();
 			anal_axg (core, input[1] ? input + 2 : NULL, 0, db);
 			sdb_free (db);
-		}
-		break;
-	case 'k': // "axk"
-		if (input[1] == '?') {
-			eprintf ("Usage: axk [query]\n");
-		} else if (input[1] == ' ') {
-			sdb_query (core->anal->sdb_xrefs, input + 2);
-		} else {
-			r_core_anal_ref_list (core, 'k');
 		}
 		break;
 	case '\0': // "ax"
