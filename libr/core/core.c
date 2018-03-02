@@ -24,6 +24,7 @@ static const char *tmp_argv[TMP_ARGV_SZ];
 static bool tmp_argv_heap = false;
 
 extern int r_is_heap (void *p);
+extern bool r_core_is_project (RCore *core, const char *name);
 
 static void r_line_free_autocomplete(RLine *line) {
 	int i;
@@ -278,7 +279,7 @@ static void core_post_write_callback(void *user, ut64 maddr, ut8 *bytes, int cnt
 	RIOSection *sec;
 	ut64 vaddr;
 
-	if (!r_config_get_i (core->config, "asm.cmtpatch")) {
+	if (!r_config_get_i (core->config, "asm.cmt.patch")) {
 		return;
 	}
 
@@ -952,6 +953,7 @@ static int autocomplete(RLine *line) {
 				ADDARG("ai.exec")
 				ADDARG("ai.seq")
 				ADDARG("ai.ascii")
+				ADDARG("ai.unmap")
 				ADDARG("graph.box")
 				ADDARG("graph.box2")
 				ADDARG("graph.box3")
@@ -1260,7 +1262,7 @@ static int autocomplete(RLine *line) {
 			str = line->buffer.data + buflen;
 			n = strlen (str);
 			r_list_foreach (bp->bps, iter, b) {
-				char *addr = r_str_newf ("0x%llx", b->addr);
+				char *addr = r_str_newf ("0x%"PFMT64x"", b->addr);
 				if (!strncmp (addr, str, n)) {
 					tmp_argv[i++] = addr;
 				} else {
@@ -1304,6 +1306,29 @@ static int autocomplete(RLine *line) {
 						break;
 					}
 				}
+			}
+			tmp_argv[R_MIN(i, TMP_ARGV_SZ - 1)] = NULL;
+			line->completion.argc = i;
+			line->completion.argv = tmp_argv;
+		} else if ( !strncmp (line->buffer.data, "Po ", 3)) {
+			char *foo, *projects_path = r_file_abspath (r_config_get (core->config, "dir.projects"));
+			RList *list = r_sys_dir (projects_path);
+			RListIter *iter;
+			int n = strlen (line->buffer.data + 3);
+			int i = 0;
+			if (projects_path) {
+				r_list_foreach (list, iter, foo) {
+					if (r_core_is_project (core, foo)) {
+						if (!strncmp (foo, line->buffer.data + 3, n)) {
+							tmp_argv[i++] = r_str_newf ("%s", foo);
+							if (i == TMP_ARGV_SZ - 1) {
+								break;
+							}
+						}
+					}
+				}
+				free (projects_path);
+				r_list_free (list);
 			}
 			tmp_argv[R_MIN(i, TMP_ARGV_SZ - 1)] = NULL;
 			line->completion.argc = i;
@@ -2025,7 +2050,7 @@ static void set_prompt (RCore *r) {
 	if (cmdprompt && *cmdprompt)
 		r_core_cmd (r, cmdprompt, 0);
 
-	if (r_config_get_i (r->config, "scr.promptfile")) {
+	if (r_config_get_i (r->config, "scr.prompt.file")) {
 		free (filename);
 		filename = r_str_newf ("\"%s\"",
 			r_file_basename (r->io->desc->name));
@@ -2054,10 +2079,10 @@ static void set_prompt (RCore *r) {
 		int promptset = false;
 
 		sec[0] = '\0';
-		if (r_config_get_i (r->config, "scr.promptflag")) {
+		if (r_config_get_i (r->config, "scr.prompt.flag")) {
 			promptset = prompt_flag (r, p, sizeof (p));
 		}
-		if (r_config_get_i (r->config, "scr.promptsect")) {
+		if (r_config_get_i (r->config, "scr.prompt.sect")) {
 			prompt_sec (r, sec, sizeof (sec));
 		}
 
@@ -2112,7 +2137,7 @@ R_API int r_core_prompt_exec(RCore *r) {
 	return ret;
 }
 
-R_API int r_core_block_size(RCore *core, int bsize) {
+R_API int r_core_seek_size(RCore *core, ut64 addr, int bsize) {
 	ut8 *bump;
 	int ret = false;
 	if (bsize < 0) {
@@ -2132,6 +2157,7 @@ R_API int r_core_block_size(RCore *core, int bsize) {
 		eprintf ("Block size %d is too big\n", bsize);
 		return false;
 	}
+	core->offset = addr;
 	if (bsize < 1) {
 		bsize = 1;
 	} else if (core->blocksize_max && bsize>core->blocksize_max) {
@@ -2151,6 +2177,10 @@ R_API int r_core_block_size(RCore *core, int bsize) {
 		r_core_block_read (core);
 	}
 	return ret;
+}
+
+R_API int r_core_block_size(RCore *core, int bsize) {
+	return r_core_seek_size (core, core->offset, bsize);
 }
 
 R_API int r_core_seek_align(RCore *core, ut64 align, int times) {

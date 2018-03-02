@@ -297,11 +297,13 @@ R_API RPrint* r_print_new() {
 	p->get_register = NULL;
 	p->get_register_value = NULL;
 	p->lines_cache = NULL;
+	p->calc_row_offsets = true;
 	p->row_offsets_sz = 0;
 	p->row_offsets = NULL;
 	p->vflush = true;
 	p->screen_bounds = 0;
 	p->esc_bslash = false;
+	p->strconv_mode = NULL;
 	memset (&p->consbind, 0, sizeof (p->consbind));
 	return p;
 }
@@ -935,7 +937,11 @@ R_API void r_print_hexdump(RPrint *p, ut64 addr, const ut8 *buf, int len, int ba
 					r_print_cursor (p, j, 1);
 					// stub for colors
 					if (p && p->colorfor) {
-						a = p->colorfor (p->user, n, true);
+						if (!p->iob.addr_is_mapped (p->iob.io, addr + j)) {
+							a = p->cons->pal.ai_unmap;
+						} else {
+							a = p->colorfor (p->user, n, true);
+						}
 						if (a && *a) {
 							b = Color_RESET;
 						} else {
@@ -1783,12 +1789,17 @@ R_API char* r_print_colorize_opcode(RPrint *print, char *p, const char *reg, con
 
 // reset the status of row_offsets
 R_API void r_print_init_rowoffsets(RPrint *p) {
-	R_FREE (p->row_offsets);
-	p->row_offsets_sz = 0;
+	if (p->calc_row_offsets) {
+		R_FREE(p->row_offsets);
+		p->row_offsets_sz = 0;
+	}
 }
 
 // set the offset, from the start of the printing, of the i-th row
-R_API void r_print_set_rowoff(RPrint *p, int i, ut32 offset) {
+R_API void r_print_set_rowoff(RPrint *p, int i, ut32 offset, bool overwrite) {
+	if (!overwrite) {
+		return;
+	}
 	if (i < 0) {
 		return;
 	}

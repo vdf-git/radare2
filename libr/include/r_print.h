@@ -88,7 +88,10 @@ typedef struct r_print_t {
 	int lines_cache_sz;
 	int lines_abs;
 	bool esc_bslash;
+	const char *strconv_mode;
 
+	// when true it uses row_offsets
+	bool calc_row_offsets;
 	// offset of the first byte of each printed row.
 	// Last elements is marked with a UT32_MAX.
 	ut32 *row_offsets;
@@ -153,7 +156,7 @@ R_API void r_print_offset(RPrint *p, ut64 off, int invert, int opt, int dec, int
 #define R_PRINT_STRING_WRAP 8
 #define R_PRINT_STRING_WIDE32 16
 R_API int r_print_string(RPrint *p, ut64 seek, const ut8 *str, int len, int options);
-R_API int r_print_date_dos(RPrint *p, ut8 *buf, int len);
+R_API int r_print_date_dos(RPrint *p, const ut8 *buf, int len);
 R_API int r_print_date_hfs(RPrint *p, const ut8 *buf, int len);
 R_API int r_print_date_w32(RPrint *p, const ut8 *buf, int len);
 R_API int r_print_date_unix(RPrint *p, const ut8 *buf, int len);
@@ -170,7 +173,7 @@ R_API const char * r_print_color_op_type(RPrint *p, ut64 anal_type);
 R_API void r_print_set_interrupted(int i);
 R_API void r_print_init_rowoffsets(RPrint *p);
 R_API ut32 r_print_rowoff(RPrint *p, int i);
-R_API void r_print_set_rowoff(RPrint *p, int i, ut32 offset);
+R_API void r_print_set_rowoff(RPrint *p, int i, ut32 offset, bool overwrite);
 R_API int r_print_row_at_off(RPrint *p, ut32 offset);
 // WIP
 R_API int r_print_unpack7bit(const char *src, char *dest);

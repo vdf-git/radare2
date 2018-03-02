@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2017 - pancake, nibble */
+/* radare - LGPL - Copyright 2009-2018 - pancake, nibble */
 
 #include <r_types.h>
 #include <r_list.h>
@@ -100,23 +100,59 @@ static bool iscodesection(RCore *core, ut64 addr) {
 #endif
 
 static char *is_string_at(RCore *core, ut64 addr, int *olen) {
+	ut8 rstr[128] = {0};
+	int ret = 0, len = 0;
 	ut8 *str;
-	int ret, len = 0;
 	//there can be strings in code section
 #if 0
 	if (iscodesection (core, addr)) {
 		return NULL;
 	}
 #endif
-	str = calloc (1024, 1);
+	str = calloc (256, 1);
 	if (!str) {
 		return NULL;
 	}
-	r_io_read_at (core->io, addr, str, 1024);
-	str[1023] = 0;
+	r_io_read_at (core->io, addr, str, 255);
+
+	str[255] = 0;
+	if (is_string (str, 256, &len)) {
+		return (char*) str;
+	}
+	
+	ut64 *cstr = (ut64*)str;
+	ut64 lowptr = cstr[0];
+	if (lowptr >> 32) { // must be pa mode only
+		lowptr &= UT32_MAX;
+	}
+	// eprintf ("PTR %llx [ %llx %llx %llx ]\n", addr, cstr[0], cstr[1], cstr[2]);
+	// cstring
+	if (cstr[0] == 0 && cstr[1] < 0x1000) {
+		ut64 ptr = cstr[2];
+		if (ptr >> 32) { // must be pa mode only
+			ptr &= UT32_MAX;
+		}
+		if (ptr) {	
+			r_io_read_at (core->io, ptr, rstr, sizeof (rstr));
+			rstr[127] = 0;
+			ret = is_string (rstr, 128, &len);
+			if (ret) {
+				strcpy ((char*) str, (char*) rstr);
+				return (char*) str;
+			}
+		}
+	} else {
+		// pstring
+		r_io_read_at (core->io, lowptr, rstr, sizeof (rstr));
+		rstr[127] = 0;
+		ret = is_string (rstr, sizeof (rstr), &len);
+		if (ret) {
+			strcpy ((char*) str, (char*) rstr);
+			return (char*) str;
+		}
+	}
 	// check if current section have no exec bit
-	ret = is_string (str, 1024, &len);
-	if (!ret || len < 1) {
+	if (len < 1) {
 		ret = 0;
 		free (str);
 		len = -1;
@@ -525,6 +561,7 @@ static int core_anal_fcn(RCore *core, ut64 at, ut64 from, int reftype, int depth
 		int delta = r_anal_fcn_size (fcn);
 		// XXX hack slow check io error
 		if (core->io->va) {
+
 			if (!r_io_is_valid_offset (core->io, at+delta, !core->anal->opt.noncode)) {
 				goto error;
 			}
@@ -919,7 +956,7 @@ static char *core_anal_graph_label(RCore *core, RAnalBlock *bb, int opts) {
 		const bool scrColor = r_config_get (core->config, "scr.color");
 		const bool scrUtf8 = r_config_get (core->config, "scr.utf8");
 		const bool asmComments = r_config_get (core->config, "asm.comments");
-		r_config_set (core->config, "scr.color", "false");
+		r_config_set_i (core->config, "scr.color", COLOR_MODE_DISABLED);
 		r_config_set (core->config, "scr.utf8", "false");
 		r_config_set (core->config, "asm.comments", "false");
 		snprintf (cmd, sizeof (cmd),
@@ -938,17 +975,11 @@ static char *core_anal_graph_label(RCore *core, RAnalBlock *bb, int opts) {
 }
 
 static char *palColorFor(const char *k) {
-	RCons *cons = r_cons_singleton ();
-	if (!cons) {
+	if (!r_cons_singleton ()) {
 		return NULL;
 	}
-	const char *c = r_cons_pal_get (k);
-	if (c) {
-		ut8 r = 0, g = 0, b = 0;
-		r_cons_rgb_parse (c, &r, &g, &b, NULL);
-		return r_cons_rgb_tostring (r, g, b);
-	}
-	return NULL;
+	RColor rcolor = r_cons_pal_get (k);
+	return r_cons_rgb_tostring (rcolor.r, rcolor.g, rcolor.b);
 }
 
 static void core_anal_color_curr_node(RCore *core, RAnalBlock *bbi) {
@@ -2745,13 +2776,13 @@ R_API int r_core_anal_search_xrefs(RCore *core, ut64 from, ut64 to, int rad) {
 		(void)r_io_read_at (core->io, at, buf, bsz);
 		memset (block, -1, bsz);
 		if (!memcmp (buf, block, bsz)) {
-			//eprintf ("Error: skipping uninitialized block \n");
+		//	eprintf ("Error: skipping uninitialized block \n");
 			at += bsz;
 			continue;
 		}
 		memset (block, 0, bsz);
 		if (!memcmp (buf, block, bsz)) {
-			//eprintf ("Error: skipping uninitialized block \n");
+		//	eprintf ("Error: skipping uninitialized block \n");
 			at += bsz;
 			continue;
 		}
@@ -3015,7 +3046,7 @@ R_API int r_core_anal_data (RCore *core, ut64 addr, int count, int depth, int wo
 	r_io_read_at (core->io, addr, buf, len);
 	buf[len - 1] = 0;
 
-	RConsPalette *pal = r_config_get_i (core->config, "scr.color")? &r_cons_singleton()->pal: NULL;
+	RConsPrintablePalette *pal = r_config_get_i (core->config, "scr.color")? &r_cons_singleton()->pal: NULL;
 	for (i = j = 0; j < count; j++) {
 		if (i >= len) {
 			r_io_read_at (core->io, addr + i, buf, len);
@@ -3822,7 +3853,9 @@ R_API void r_core_anal_esil(RCore *core, const char *str, const char *target) {
 							r_anal_ref_add (core->anal, dst, cur, 'd');
 						}
 					}
-					add_string_ref (core, dst);
+				//	if (cfg_anal_strings) {
+						add_string_ref (core, dst);
+				//	}
 				} else if ((core->anal->bits == 32 && core->anal->cur && !strcmp (core->anal->cur->arch, "mips"))) {
 					ut64 dst = ESIL->cur;
 					if (!op.src[0] || !op.src[0]->reg || !op.src[0]->reg->name) {

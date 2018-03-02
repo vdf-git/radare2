@@ -164,7 +164,7 @@ static const char *help_detail_ae[] = {
 
 static const char *help_msg_aea[] = {
 	"Examples:", "aea", " show regs used in a range",
-	"aea", " [ops]", "Show regs used in N instructions",
+	"aea", " [ops]", "Show regs used in N instructions (all,read,{no,}written,memreads,memwrites)",
 	"aea*", " [ops]", "Create mem.* flags for memory accesses",
 	"aeaf", "", "Show regs used in current function",
 	"aear", " [ops]", "Show regs read in N instructions",
@@ -2026,6 +2026,14 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 	case 'f': // "aff"
 		r_anal_fcn_fit_overlaps (core->anal, NULL);
 		break;
+	case 'a':
+		if (input[2] == 'l') { // afal : list function call arguments
+			int show_args = r_config_get_i (core->config, "dbg.funcarg");
+			if (show_args) {
+				r_core_print_func_args (core);
+			}
+			break;
+		}
 	case 'd': // "afd"
 		{
 		ut64 addr = 0;	
@@ -3086,11 +3094,21 @@ static ut64 initializeEsil(RCore *core) {
 	return addr;
 }
 
+static const ut8 *modify_read_window(void *anal_, ut64 new_addr, int new_len) {
+	RAnal *anal = anal_;
+	ut8 *buf = calloc (new_len, 1);
+	if (!buf) {
+		return NULL;
+	}
+	(void)r_io_read_at (anal->iob.io, new_addr, buf, new_len);
+	return buf;
+}
+
 R_API int r_core_esil_step(RCore *core, ut64 until_addr, const char *until_expr, ut64 *prev_addr) {
 #define return_tail(x) { tail_return_value = x; goto tail_return; }
 	int tail_return_value = 0;
 	int ret;
-	ut8 code[48];
+	ut8 code[32];
 	RAnalOp op = {0};
 	RAnalEsil *esil = core->anal->esil;
 	const char *name = r_reg_get_name (core->anal->reg, R_REG_NAME_PC);
@@ -3107,6 +3125,7 @@ R_API int r_core_esil_step(RCore *core, ut64 until_addr, const char *until_expr,
 			return 0;
 		}
 		r_anal_esil_setup (esil, core->anal, romem, stats, noNULL); // setup io
+		core->anal->cb.modify_read_window = modify_read_window;
 		core->anal->esil = esil;
 		esil->verbose = verbose;
 		{
@@ -3842,13 +3861,13 @@ static bool cmd_aea(RCore* core, int mode, ut64 addr, int length) {
 	} else if ((mode >> 5) & 1) {
 		// nothing
 	} else {
-		r_cons_printf ("A: ");
+		r_cons_printf (" A: ");
 		showregs (stats.regs);
-		r_cons_printf ("R: ");
+		r_cons_printf (" R: ");
 		showregs (stats.regread);
-		r_cons_printf ("W: ");
+		r_cons_printf (" W: ");
 		showregs (stats.regwrite);
-		r_cons_printf ("N: ");
+		r_cons_printf ("NW: ");
 		if (r_list_length (regnow)) {
 			showregs (regnow);
 		} else {
@@ -3858,11 +3877,11 @@ static bool cmd_aea(RCore* core, int mode, ut64 addr, int length) {
 		ut64 *n;
 		int c = 0;
 		r_list_foreach (mymemxsr, iter, n) {
-			r_cons_printf ("L%d: 0x%08"PFMT64x"\n", c++, *n);
+			r_cons_printf ("R%d: 0x%08"PFMT64x"\n", c++, *n);
 		}
 		c = 0;
 		r_list_foreach (mymemxsw, iter, n) {
-			r_cons_printf ("L%d: 0x%08"PFMT64x"\n", c++, *n);
+			r_cons_printf ("W%d: 0x%08"PFMT64x"\n", c++, *n);
 		}
 	}
 	r_list_free (mymemxsr);
@@ -4320,7 +4339,9 @@ static void cmd_anal_esil(RCore *core, const char *input) {
 				break;
 			}
 		} else {
-			cmd_aea (core, 0, core->offset, r_num_math (core->num, input+2));
+			const char *arg = input[1]? input + 2: "";
+			ut64 len = r_num_math (core->num, arg);
+			cmd_aea (core, 0, core->offset, len);
 		}
 		break;
 	case 'x': { // "aex"	
@@ -4614,16 +4635,12 @@ static void _anal_calls(RCore *core, ut64 addr, ut64 addr_end) {
 	}
 	buf = malloc (bsz);
 	block = malloc (bsz);
-	if (!buf) {
-		eprintf ("Error: cannot allocate a block\n");
+	if (!buf || !block) {
+		eprintf ("Error: cannot allocate buf or block\n");
+		free (buf);
 		free (block);
 		return;
 	}
-	if (!block) {
-		eprintf ("Error: cannot allocate a temp block\n");
-		free (buf);
-		return;
-	}	
 	while (addr < addr_end) {
 		if (r_cons_is_breaked ()) {
 			break;
@@ -6495,12 +6512,12 @@ static int cmd_anal(void *data, const char *input) {
 		RAnalCycleHook *hook;
 		char *instr_tmp = NULL;
 		int ccl = input[1]? r_num_math (core->num, &input[2]): 0; //get cycles to look for
-		int cr = r_config_get_i (core->config, "asm.cmtright");
+		int cr = r_config_get_i (core->config, "asm.cmt.right");
 		int fun = r_config_get_i (core->config, "asm.functions");
 		int li = r_config_get_i (core->config, "asm.lines");
 		int xr = r_config_get_i (core->config, "asm.xrefs");
 
-		r_config_set_i (core->config, "asm.cmtright", true);
+		r_config_set_i (core->config, "asm.cmt.right", true);
 		r_config_set_i (core->config, "asm.functions", false);
 		r_config_set_i (core->config, "asm.lines", false);
 		r_config_set_i (core->config, "asm.xrefs", false);
@@ -6515,7 +6532,7 @@ static int cmd_anal(void *data, const char *input) {
 		}
 		r_list_free (hooks);
 
-		r_config_set_i (core->config, "asm.cmtright", cr); //reset settings
+		r_config_set_i (core->config, "asm.cmt.right", cr); //reset settings
 		r_config_set_i (core->config, "asm.functions", fun);
 		r_config_set_i (core->config, "asm.lines", li);
 		r_config_set_i (core->config, "asm.xrefs", xr);

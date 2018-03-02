@@ -503,16 +503,14 @@ static int cb_asmarch(void *user, void *data) {
 	// set a default endianness
 	int bigbin = r_bin_is_big_endian (core->bin);
 	if (bigbin == -1 /* error: no endianness detected in binary */) {
-		// try to set RAsm to LE
-		r_asm_set_big_endian (core->assembler, false);
-		// set endian of display to LE
-		core->print->big_endian = false;
-	} else {
-		// try to set endian of RAsm to match binary
-		r_asm_set_big_endian (core->assembler, bigbin);
-		// set endian of display to match binary
-		core->print->big_endian = bigbin;
+		bigbin = r_config_get_i (core->config, "cfg.bigendian");
 	}
+
+	// try to set endian of RAsm to match binary
+	r_asm_set_big_endian (core->assembler, bigbin);
+	// set endian of display to match binary
+	core->print->big_endian = bigbin;
+
 	r_asm_set_cpu (core->assembler, asm_cpu);
 	free (asm_cpu);
 	RConfigNode *asmcpu = r_config_node_get (core->config, "asm.cpu");
@@ -1010,10 +1008,10 @@ static int cb_color(void *user, void *data) {
 	if (node->i_value) {
 		core->print->flags |= R_PRINT_FLAGS_COLOR;
 	} else {
-		//c:core->print->flags ^= R_PRINT_FLAGS_COLOR;
 		core->print->flags &= (~R_PRINT_FLAGS_COLOR);
 	}
-	r_cons_singleton ()->use_color = node->i_value? 1: 0;
+	r_cons_singleton ()->color = (node->i_value > COLOR_MODE_16M)? COLOR_MODE_16M: node->i_value;
+	r_cons_pal_update_event ();
 	r_print_set_flags (core->print, core->print->flags);
 	return true;
 }
@@ -1608,18 +1606,6 @@ static int cb_fps(void *user, void *data) {
 	return true;
 }
 
-static int cb_rgbcolors(void *user, void *data) {
-	RConfigNode *node = (RConfigNode *) data;
-	RCore *core = (RCore *) user;
-	if (node->i_value) {
-		r_cons_singleton()->truecolor =
-			(r_config_get_i (core->config, "scr.truecolor"))?2:1;
-	} else {
-		r_cons_singleton()->truecolor = 0;
-	}
-	return true;
-}
-
 static int cb_scrbreakword(void* user, void* data) {
 	RConfigNode *node = (RConfigNode*) data;
 	if (*node->value) {
@@ -1691,6 +1677,37 @@ static int cb_scrflush(void *user, void *data) {
 	r_cons_singleton()->flush = node->i_value;
 	return true;
 }
+
+static int cb_scrstrconv(void *user, void *data) {
+	RCore *core = (RCore*) user;
+	RConfigNode *node = (RConfigNode*) data;
+	if (node->value[0] == '?') {
+		if (strlen (node->value) > 1 && node->value[1] == '?') {
+			r_cons_printf ("Valid values for scr.strconv:\n"
+				"  asciiesc  convert to ascii with non-ascii chars escaped\n"
+				"  asciidot  convert to ascii with non-ascii chars turned into a dot (except some control chars)\n"
+				"\n"
+				"Ascii chars are in the range 0x20-0x7e.\n");
+		} else {
+			print_node_options (node);
+		}
+		return false;
+	} else {
+		free ((char *)core->print->strconv_mode);
+		core->print->strconv_mode = strdup (node->value);
+	}
+	return true;
+}
+
+static int cb_graphformat(void *user, void *data) {
+	RConfigNode *node = (RConfigNode *) data;
+	if (!strcmp (node->value, "?")) {
+		r_cons_printf ("dot\ngml\ngmlfcn\n");
+		return false;
+	}
+	return true;
+}
+
 
 static int cb_exectrap(void *user, void *data) {
 	RConfigNode *node = (RConfigNode *) data;
@@ -1805,13 +1822,6 @@ static int cb_tracetag(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *) data;
 	core->dbg->trace->tag = node->i_value;
-	return true;
-}
-
-static int cb_truecolor(void *user, void *data) {
-	RConfigNode *node = (RConfigNode *) data;
-	if (r_cons_singleton()->truecolor)
-		r_cons_singleton()->truecolor = (node->i_value)? 2: 1;
 	return true;
 }
 
@@ -2313,12 +2323,13 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("asm.midcursor", "false", "Cursor in visual disasm mode breaks the instruction");
 	SETOPTIONS (n, "0 = do not show flag", "1 = show without realign", "2 = realign at middle flag",
 		"3 = realign at middle flag if sym.*", NULL);
-	SETPREF ("asm.cmtflgrefs", "true", "Show comment flags associated to branch reference");
-	SETPREF ("asm.cmtright", "true", "Show comments at right of disassembly if they fit in screen");
-	SETI ("asm.cmtcol", 71, "Column to align comments");
+	SETPREF ("asm.cmt.flgrefs", "true", "Show comment flags associated to branch reference");
+	SETPREF ("asm.cmt.right", "true", "Show comments at right of disassembly if they fit in screen");
+	SETI ("asm.cmt.col", 71, "Column to align comments");
 	SETICB ("asm.pcalign", 0, &cb_asm_pcalign, "Only recognize as valid instructions aligned to this value");
 	SETPREF ("asm.calls", "true", "Show callee function related info as comments in disasm");
 	SETPREF ("asm.bbline", "false", "Show empty line after every basic block");
+	SETPREF ("asm.bbinfo", "false", "Show basic block information");
 	SETPREF ("asm.comments", "true", "Show comments in disassembly view");
 	SETPREF ("asm.jmphints", "true", "Show jump hints [numbers] in disasm");
 	SETPREF ("asm.jmpsub", "false", "Always substitute jump, call and branch targets in disassembly");
@@ -2384,7 +2395,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETI ("asm.varsum", 0, "Show variables summary instead of full list in disasm (0, 1, 2)");
 	SETPREF ("asm.varsub_only", "true", "Substitute the entire variable expression with the local variable name (e.g. [local10h] instead of [ebp+local10h])");
 	SETPREF ("asm.relsub", "true", "Substitute pc relative expressions in disasm");
-	SETPREF ("asm.cmtfold", "false", "Fold comments, toggle with Vz");
+	SETPREF ("asm.cmt.fold", "false", "Fold comments, toggle with Vz");
 	SETPREF ("asm.family", "false", "Show family name in disasm");
 	SETPREF ("asm.symbol", "false", "Show symbol+delta instead of absolute offset");
 	SETPREF ("asm.anal", "false", "Analyze code and refs while disassembling (see anal.strings)");
@@ -2422,12 +2433,10 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("asm.describe", "false", "Show opcode description");
 	SETPREF ("asm.hints", "false", "Show hints for magic numbers in disasm");
 	SETPREF ("asm.marks", "true", "Show marks before the disassembly");
-	SETPREF ("asm.cmtrefs", "false", "Show flag and comments from refs in disasm");
-	SETPREF ("asm.cmtpatch", "false", "Show patch comments in disasm");
-	SETPREF ("asm.cmtoff", "nodup", "Show offset comment in disasm (true, false, nodup)");
+	SETPREF ("asm.cmt.refs", "false", "Show flag and comments from refs in disasm");
+	SETPREF ("asm.cmt.patch", "false", "Show patch comments in disasm");
+	SETPREF ("asm.cmt.off", "nodup", "Show offset comment in disasm (true, false, nodup)");
 	SETPREF ("asm.payloads", "false", "Show payload bytes in disasm");
-	SETPREF ("asm.asciidot", "false", "Enable a char filter for string comments that passes through chars in the "
-		 "range 0x20-0x7e and turns the rest into dots (except some control chars)");
 	n = NODECB ("asm.strenc", "guess", &cb_asmstrenc);
 	SETDESC (n, "Assumed string encoding for disasm");
 	SETOPTIONS (n, "latin1", "utf8", "utf16le", "utf32le", "guess", NULL);
@@ -2543,6 +2552,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETI ("dbg.hwbp", 0, "Set HW or SW breakpoints");
 	SETCB ("dbg.unlibs", "", &cb_dbg_unlibs, "If set stop when unloading matching libname");
 	SETPREF ("dbg.slow", "false", "Show stack and regs in visual mode in a slow but verbose mode");
+	SETPREF ("dbg.funcarg", "false", "Display arguments to function call in visual mode");
 
 	SETPREF ("dbg.bpinmaps", "true", "Force breakpoints to be inside a valid map");
 	SETCB ("dbg.forks", "false", &cb_dbg_forks, "Stop execution if fork() is done (see dbg.threads)");
@@ -2709,10 +2719,13 @@ R_API int r_core_config_init(RCore *core) {
 	free (tmpdir);
 	r_config_desc (cfg, "http.uproot", "Path where files are uploaded");
 
+	/* tcp */
+	SETPREF ("tcp.islocal", "false", "Bind a loopback for tcp command server");
+
 	/* graph */
 	SETPREF ("graph.comments", "true", "Show disasm comments in graph");
 	SETPREF ("graph.cmtright", "false", "Show comments at right");
-	SETPREF ("graph.format", "dot", "Specify output format for graphs (dot, gml, gmlfcn)");
+	SETCB ("graph.format", "dot", &cb_graphformat, "Specify output format for graphs (dot, gml, gmlfcn)");
 	SETPREF ("graph.refs", "false", "Graph references in callgraphs (.agc*;aggi)");
 	SETI ("graph.edges", 2, "0=no edges, 1=simple edges, 2=avoid collisions");
 	SETI ("graph.layout", 0, "Graph layout (0=vertical, 1=horizontal)");
@@ -2754,6 +2767,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("scr.flush", "false", &cb_scrflush, "Force flush to console in realtime (breaks scripting)");
 	/* TODO: rename to asm.color.ops ? */
 	SETPREF ("scr.zoneflags", "true", "Show zoneflags in visual mode before the title (see fz?)");
+	SETPREF ("scr.slow", "true", "Do slow stuff on visual mode like RFlag.get_at(true)");
 	SETPREF ("scr.color.ops", "true", "Colorize numbers and registers in opcodes");
 	SETPREF ("scr.color.bytes", "true", "Colorize bytes that represent the opcodes of the instruction");
 #if __WINDOWS__ && !__CYGWIN__
@@ -2765,10 +2779,10 @@ R_API int r_core_config_init(RCore *core) {
 #else
 	SETPREF ("scr.responsive", "false", "Auto-adjust Visual depending on screen (e.g. unset asm.bytes)");
 #endif
-	SETPREF ("scr.wheelnkey", "false", "Use sn/sp and scr.nkey on wheel instead of scroll");
+	SETPREF ("scr.wheel.nkey", "false", "Use sn/sp and scr.nkey on wheel instead of scroll");
 	SETPREF ("scr.wheel", "true", "Mouse wheel in Visual; temporaryly disable/reenable by right click/Enter)");
 	SETPREF ("scr.atport", "false", "V@ starts a background http server and spawns an r2 -C");
-	SETI ("scr.wheelspeed", 4, "Mouse wheel speed");
+	SETI ("scr.wheel.speed", 4, "Mouse wheel speed");
 	// DEPRECATED: USES hex.cols now SETI ("scr.colpos", 80, "Column position of cmd.cprompt in visual");
 	SETCB ("scr.breakword", "", &cb_scrbreakword, "Emulate console break (^C) when a word is printed (useful for pD)");
 	SETCB ("scr.breaklines", "false", &cb_breaklines, "Break lines in Visual instead of truncating them");
@@ -2789,26 +2803,22 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("scr.randpal", "false", "Random color palete or just get the next one from 'eco'");
 	SETCB ("scr.color.grep", "false", &cb_scr_color_grep, "Enable colors when using ~grep");
 	SETPREF ("scr.pipecolor", "false", "Enable colors when using pipes");
-	SETPREF ("scr.promptfile", "false", "Show user prompt file (used by r2 -q)");
-	SETPREF ("scr.promptflag", "false", "Show flag name in the prompt");
-	SETPREF ("scr.promptsect", "false", "Show section name in the prompt");
+	SETPREF ("scr.prompt.file", "false", "Show user prompt file (used by r2 -q)");
+	SETPREF ("scr.prompt.flag", "false", "Show flag name in the prompt");
+	SETPREF ("scr.prompt.sect", "false", "Show section name in the prompt");
 	SETPREF ("scr.tts", "false", "Use tts if available by a command (see ic)");
 	SETCB ("scr.prompt", "true", &cb_scrprompt, "Show user prompt (used by r2 -q)");
 	SETCB ("scr.tee", "", &cb_teefile, "Pipe output to file of this name");
 	SETPREF ("scr.seek", "", "Seek to the specified address on startup");
-#if __WINDOWS__ && !__CYGWIN__
-	r_config_set_cb (cfg, "scr.rgbcolor", "false", &cb_rgbcolors);
-#else
-	r_config_set_cb (cfg, "scr.rgbcolor", "true", &cb_rgbcolors);
-#endif
-	r_config_desc (cfg, "scr.rgbcolor", "Use RGB colors (not available on Windows)");
-	SETCB ("scr.truecolor", "false", &cb_truecolor, "Manage color palette (0: ansi 16, 1: 256, 2: 16M)");
-	SETCB ("scr.color", (core->print->flags&R_PRINT_FLAGS_COLOR)?"true":"false", &cb_color, "Enable colors");
+	SETICB ("scr.color", (core->print->flags&R_PRINT_FLAGS_COLOR)?COLOR_MODE_16:COLOR_MODE_DISABLED, &cb_color, "Enable colors (0: none, 1: ansi, 2: 256 colors, 3: truecolor)");
 	SETCB ("scr.null", "false", &cb_scrnull, "Show no output");
 	SETCB ("scr.utf8", r_cons_is_utf8()?"true":"false",
 		&cb_utf8, "Show UTF-8 characters instead of ANSI");
 	SETCB ("scr.utf8.curvy", "false", &cb_utf8_curvy, "Show curved UTF-8 corners (requires scr.utf8)");
 	SETPREF ("scr.histsave", "true", "Always save history on exit");
+	n = NODECB ("scr.strconv", "asciiesc", &cb_scrstrconv);
+	SETDESC (n, "Convert string before display");
+	SETOPTIONS (n, "asciiesc", "asciidot", NULL);
 
 	/* str */
 	SETCB ("str.escbslash", "false", &cb_str_escbslash, "Escape the backslash (iz and Cs-based output only)");

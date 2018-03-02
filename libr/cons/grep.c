@@ -479,7 +479,7 @@ R_API int r_cons_grepbuf(char *buf, int len) {
 				Color_RESET,
 				NULL
 			};
-			char *out = r_print_json_indent (buf, I (use_color), "  ", palette);
+			char *out = r_print_json_indent (buf, I (color), "  ", palette);
 			if (!out) {
 				return 0;
 			}
@@ -888,14 +888,14 @@ R_API char *r_cons_html_filter(const char *ptr, int *newlen) {
 				esc = 0;
 				str = ptr;
 				continue;
-			} else if (!strncmp (ptr, "48;5;", 5)) {
+			} else if (!strncmp (ptr, "48;5;", 5) || !strncmp (ptr, "48;2;", 5)) {
 				char *end = strchr (ptr, 'm');
 				r_strbuf_appendf (res, "<font style='background-color:%s'>", gethtmlrgb (ptr));
 				tag_font = true;
 				ptr = end;
 				str = ptr + 1;
 				esc = 0;
-			} else if (!strncmp (ptr, "38;5;", 5)) {
+			} else if (!strncmp (ptr, "38;5;", 5) || !strncmp (ptr, "38;2;", 5)) {
 				char *end = strchr (ptr, 'm');
 				r_strbuf_appendf (res, "<font color='%s'>", gethtmlrgb (ptr));
 				tag_font = true;
@@ -950,11 +950,3 @@ R_API char *r_cons_html_filter(const char *ptr, int *newlen) {
 	return r_strbuf_drain (res);
 }
 
-R_API int r_cons_html_print(const char *ptr) {
-	char *res = r_cons_html_filter (ptr, NULL);
-	int res_len = strlen (res);
-	printf ("%s", res);
-	fflush (stdout);
-	free (res);
-	return res_len;
-}

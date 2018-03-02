@@ -60,7 +60,6 @@ typedef struct r_io_undo_w_t {
 
 typedef struct r_io_t {
 	struct r_io_desc_t *desc;
-	int ret; // number of bytes read or written
 	ut64 off;
 	int bits;
 	int va;		//all of this config stuff must be in 1 int
@@ -257,6 +256,7 @@ typedef void (*RIOAlSort) (RIOAccessLog *log);
 typedef void (*RIOAlFree) (RIOAccessLog *log);
 typedef ut8 *(*RIOAlGetFbufByflags) (RIOAccessLog *log, int flags, ut64 *addr, int *len);
 typedef bool (*RIOIsValidOff) (RIO *io, ut64 addr, int hasperm);
+typedef bool (*RIOAddrIsMapped) (RIO *io, ut64 addr);
 typedef SdbList *(*RIOSectionVgetSecsAt) (RIO *io, ut64 vaddr);
 typedef RIOSection *(*RIOSectionVgetSec) (RIO *io, ut64 vaddr);
 typedef RIOSection *(*RIOSectionAdd) (RIO *io, ut64 addr, ut64 vaddr, ut64 size, ut64 vsize, int rwx, const char *name, ut32 bin_id, int fd);
@@ -289,6 +289,7 @@ typedef struct r_io_bind_t {
 	RIOAlFree al_free;	//needed for esil
 	RIOAlGetFbufByflags al_buf_byflags;	//needed for esil
 	RIOIsValidOff is_valid_offset;
+	RIOAddrIsMapped addr_is_mapped;
 	RIOSectionVgetSecsAt sections_vget;
 	RIOSectionVgetSec sect_vget;
 	RIOSectionAdd section_add;
@@ -333,11 +334,12 @@ R_API bool r_io_reopen (RIO *io, int fd, int flags, int mode);
 R_API int r_io_close_all (RIO *io);
 R_API int r_io_pread_at (RIO *io, ut64 paddr, ut8 *buf, int len);
 R_API int r_io_pwrite_at (RIO *io, ut64 paddr, const ut8 *buf, int len);
-R_API bool r_io_vread_at (RIO *io, ut64 vaddr, ut8 *buf, int len);
-R_API bool r_io_vwrite_at (RIO *io, ut64 vaddr, const ut8 *buf, int len);
+R_API bool r_io_vread_at_mapped(RIO* io, ut64 vaddr, ut8* buf, int len);
 R_API RIOAccessLog *r_io_al_vread_at (RIO *io, ut64 vaddr, ut8 *buf, int len);
 R_API RIOAccessLog *r_io_al_vwrite_at (RIO *io, ut64 vaddr, const ut8 *buf, int len);
 R_API bool r_io_read_at (RIO *io, ut64 addr, ut8 *buf, int len);
+R_API bool r_io_read_at_mapped(RIO *io, ut64 addr, ut8 *buf, int len);
+R_API int r_io_nread_at (RIO *io, ut64 addr, ut8 *buf, int len);
 R_API RIOAccessLog *r_io_al_read_at (RIO *io, ut64 addr, ut8 *buf, int len);
 R_API void r_io_alprint(RList *ls);
 R_API bool r_io_write_at (RIO *io, ut64 addr, const ut8 *buf, int len);

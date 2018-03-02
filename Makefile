@@ -278,7 +278,6 @@ deinstall uninstall:
 	cd binr && ${MAKE} uninstall PARENT=1
 	cd shlr && ${MAKE} uninstall PARENT=1
 	cd libr/syscall/d && ${MAKE} uninstall PARENT=1
-	cd libr/sysregs/d && ${MAKE} uninstall PARENT=1
 	cd libr/anal/d && ${MAKE} uninstall PARENT=1
 	@echo
 	@echo "Run 'make purge' to also remove installed files from previous versions of r2"
@@ -338,6 +337,9 @@ endif
 ifneq ($(PREFIX),/usr/local)
 	$(MAKE) purge PREFIX=/usr/local
 endif
+
+purge3: purge2
+	sys/purge.sh distro
 
 R2V=radare2-${VERSION}
 
@@ -413,6 +415,7 @@ B=$(DESTDIR)$(BINDIR)
 L=$(DESTDIR)$(LIBDIR)
 
 meson-symstall: symstall-sdb
+	@echo "[ Meson symstall (not stable) ]"
 	ln -fs $(PWD)/binr/r2pm/r2pm  ${B}/r2pm
 	ln -fs $(PWD)/build/binr/rasm2/rasm2 ${B}/rasm2
 	ln -fs $(PWD)/build/binr/rarun2/rarun2 ${B}/rarun2
@@ -460,3 +463,4 @@ include ${MKPLUGINS}
 
 .PHONY: all clean distclean mrproper install symstall uninstall deinstall strip
 .PHONY: libr binr install-man w32dist tests dist shot pkgcfg depgraph.png love
+.PHONY: purge purge2 purge3

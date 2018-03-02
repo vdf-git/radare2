@@ -87,6 +87,20 @@ static void rotateAsmBits(RCore *core) {
 	}
 }
 
+static void rotateAsmemu(RCore *core) {
+	const bool isEmuStr = r_config_get_i (core->config, "asm.emu.str");
+	const bool isEmu = r_config_get_i (core->config, "asm.emu");
+	if (isEmu) {
+		if (isEmuStr) {
+			r_config_set (core->config, "asm.emu.str", "false");
+		} else {
+			r_config_set (core->config, "asm.emu", "false");
+		}
+	} else {
+		r_config_set (core->config, "asm.emu.str", "true");
+	}
+}
+
 static void printSnow(RCore *core) {
 	if (!snows) {
 		snows = r_list_newf (free);
@@ -189,7 +203,7 @@ R_API int r_core_visual_hud(RCore *core) {
 	char *homehud = r_str_home (R2_HOMEDIR "/hud");
 	char *res = NULL;
 	char *p = 0;
-	r_cons_singleton ()->use_color = use_color;
+	r_cons_singleton ()->color = use_color;
 
 	showcursor (core, true);
 	if (c && *c && r_file_exists (c)) {
@@ -239,6 +253,8 @@ static int visual_help() {
 		" \\        toggle visual split mode\n"
 		" \"        toggle the column mode (uses pC..)\n"
 		" /        in cursor mode search in current block\n"
+		" (        toggle snow\n"
+		" )        toggle asm.emu.str\n"
 		" :cmd     run radare command\n"
 		" ;[-]cmt  add/remove comment\n"
 		" 0        seek to beginning of current function\n"
@@ -1474,21 +1490,24 @@ static void visual_browse(RCore *core) {
 	const char *browsemsg = \
 		"Browse stuff:\n"
 		"-------------\n"
-		" f  flags\n"
-		" e  eval var configurations\n"
+		" _  hud mode (V_)\n"
 		" b  blocks\n"
 		" c  classes\n"
-		" _  hud mode (V_)\n"
-		" i  imports\n"
-		" t  types\n"
-		" s  symbols\n"
+		" C  comments\n"
+		" e  eval var configurations\n"
+		" f  flags\n"
+		" F  functions\n"
 		" h  history\n"
+		" i  imports\n"
 		" m  maps\n"
 		" p  pids/threads\n"
+		" q  quit\n"
+		" s  symbols\n"
+		" t  types\n"
+		" T  themes\n"
+		" v  vars\n"
 		" x  xrefs\n"
 		" X  refs\n"
-		" v  vars\n"
-		" q  quit\n"
 	;
 	for (;;) {
 		r_cons_clear00 ();
@@ -1499,11 +1518,20 @@ static void visual_browse(RCore *core) {
 		case 'f':
 			r_core_visual_trackflags (core);
 			break;
+		case 'F':
+			r_core_cmd0 (core, "s $(afl~...)");
+			break;
 		case 'c':
 			r_core_visual_classes (core);
 			break;
+		case 'C':
+			r_core_cmd0 (core, "s $(CC~...)");
+			break;
 		case 't':
 			r_core_visual_types (core);
+			break;
+		case 'T':
+			r_core_cmd0 (core, "eco $(eco~...)");
 			break;
 		case 'e':
 			r_core_visual_config (core);
@@ -1580,7 +1608,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 		return 1;
 	}
 	if (r_cons_singleton ()->mouse_event) {
-		wheelspeed = r_config_get_i (core->config, "scr.wheelspeed");
+		wheelspeed = r_config_get_i (core->config, "scr.wheel.speed");
 	} else {
 		wheelspeed = 1;
 	}
@@ -2088,7 +2116,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			if (core->print->cur_enabled) {
 				cursor_nextrow (core, false);
 			} else {
-				if (r_config_get_i (core->config, "scr.wheelnkey")) {
+				if (r_config_get_i (core->config, "scr.wheel.nkey")) {
 					r_core_cmd0 (core, "sn");
 				} else {
 					int times = R_MAX (1, wheelspeed);
@@ -2150,7 +2178,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			if (core->print->cur_enabled) {
 				cursor_prevrow (core, false);
 			} else {
-				if (r_config_get_i (core->config, "scr.wheelnkey")) {
+				if (r_config_get_i (core->config, "scr.wheel.nkey")) {
 					r_core_cmd0 (core, "sp");
 				} else {
 					int times = wheelspeed;
@@ -2200,9 +2228,9 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			if (core->print->cur_enabled &&
 				(core->printidx == R_CORE_VISUAL_MODE_PD ||
 				(core->printidx == R_CORE_VISUAL_MODE_PDDBG && core->seltab == 2))) {
-				int cmtcol = r_config_get_i (core->config, "asm.cmtcol");
+				int cmtcol = r_config_get_i (core->config, "asm.cmt.col");
 				if (cmtcol > 2) {
-					r_config_set_i (core->config, "asm.cmtcol", cmtcol - 2);
+					r_config_set_i (core->config, "asm.cmt.col", cmtcol - 2);
 				}
 			}
 			// hex column
@@ -2219,8 +2247,8 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			if (core->print->cur_enabled &&
 				(core->printidx == R_CORE_VISUAL_MODE_PD ||
 				(core->printidx == R_CORE_VISUAL_MODE_PDDBG && core->seltab == 2))) {
-				int cmtcol = r_config_get_i (core->config, "asm.cmtcol");
-				r_config_set_i (core->config, "asm.cmtcol", cmtcol + 2);
+				int cmtcol = r_config_get_i (core->config, "asm.cmt.col");
+				r_config_set_i (core->config, "asm.cmt.col", cmtcol + 2);
 			}
 			// hex column
 			if ((core->printidx != R_CORE_VISUAL_MODE_PD && core->printidx != R_CORE_VISUAL_MODE_PDDBG) ||
@@ -2382,6 +2410,9 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 				r_list_free (snows);
 				snows = NULL;
 			}
+			break;
+		case ')':
+			rotateAsmemu (core);
 			break;
 		case '*':
 			if (core->print->cur_enabled) {
@@ -2562,7 +2593,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			if (fcn) {
 				fcn->folded = !fcn->folded;
 			} else {
-				r_config_toggle (core->config, "asm.cmtfold");
+				r_config_toggle (core->config, "asm.cmt.fold");
 			}
 		}
 		break;
@@ -2591,6 +2622,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 }
 
 R_API void r_core_visual_title(RCore *core, int color) {
+	bool showDelta = r_config_get_i (core->config, "scr.slow");
 	static ut64 oldpc = 0;
 	const char *BEGIN = core->cons->pal.prompt;
 	const char *filename;
@@ -2655,7 +2687,8 @@ R_API void r_core_visual_title(RCore *core, int color) {
 		}
 	}
 
-	filename = (core->file && core->io) ? r_io_desc_get (core->io, core->file->fd)->name : "";
+	RIODesc *desc = r_io_desc_get (core->io, core->file->fd);
+	filename = desc? desc->name: "";
 	{ /* get flag with delta */
 		ut64 addr = core->offset + (core->print->cur_enabled? core->print->cur: 0);
 #if 1
@@ -2666,12 +2699,12 @@ R_API void r_core_visual_title(RCore *core, int color) {
 		core->flags->space_strict = true;
 		core->anal->flb.set_fs (core->flags, "symbols");
 		if (core->flags->space_idx != -1) {
-			f = core->anal->flb.get_at (core->flags, addr, false);
+			f = core->anal->flb.get_at (core->flags, addr, showDelta);
 		}
 		core->flags->space_strict = oss;
 		core->flags->space_idx = osi;
 		if (!f) {
-			f = r_flag_get_at (core->flags, addr, false);
+			f = r_flag_get_at (core->flags, addr, showDelta);
 		}
 #else
 		RFlagItem *f = r_flag_get_at (core->flags, addr, false);
@@ -2763,9 +2796,9 @@ static int visual_responsive(RCore *core) {
 	int h, w = r_cons_get_size (&h);
 	if (r_config_get_i (core->config, "scr.responsive")) {
 		if (w < 110) {
-			r_config_set_i (core->config, "asm.cmtright", 0);
+			r_config_set_i (core->config, "asm.cmt.right", 0);
 		} else {
-			r_config_set_i (core->config, "asm.cmtright", 1);
+			r_config_set_i (core->config, "asm.cmt.right", 1);
 		}
 		if (w < 68) {
 			r_config_set_i (core->config, "hex.cols", w / 5.2);
@@ -2780,7 +2813,7 @@ static int visual_responsive(RCore *core) {
 		if (w > 80) {
 			r_config_set_i (core->config, "asm.lineswidth", 14);
 			r_config_set_i (core->config, "asm.lineswidth", w - (w / 1.2));
-			r_config_set_i (core->config, "asm.cmtcol", w - (w / 2.5));
+			r_config_set_i (core->config, "asm.cmt.col", w - (w / 2.5));
 		} else {
 			r_config_set_i (core->config, "asm.lineswidth", 7);
 		}
@@ -3002,7 +3035,7 @@ dodo:
 				snprintf (debugstr, sizeof (debugstr),
 					"?0;f tmp;ssr SP;%s %d@$$%c%d;"
 					"?1;%s;"
-					"?1;ss tmp;f-tmp;pd $r",
+					"?1;ss tmp;f-tmp;afal;pd $r",
 					pxa? "pxa": pxw, size, sign, absdelta,
 					ref? "drr": "dr=");
 			}

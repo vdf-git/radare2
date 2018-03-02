@@ -776,6 +776,9 @@ repeat:
 				break; // unspecified behaviour
 			}
 		}
+		if (op.hint.new_bits) {
+			r_anal_hint_set_bits (anal, op.jump, op.hint.new_bits);
+		}
 		if (idx > 0 && !overlapped) {
 			bbg = bbget (fcn, addr + idx);
 			if (bbg && bbg != bb) {
@@ -1239,8 +1242,6 @@ repeat:
 			FITFCNSZ ();
 			r_anal_op_fini (&op);
 			return R_ANAL_RET_END;
-river:
-			break;
 		/* fallthru */
 		case R_ANAL_OP_TYPE_PUSH:
 			last_is_push = true;
@@ -1394,19 +1395,13 @@ R_API int r_anal_fcn(RAnal *anal, RAnalFunction *fcn, ut64 addr, ut8 *buf, ut64 
 		RListIter *iter;
 		RAnalBlock *bb;
 		ut64 endaddr = fcn->addr;
-		ut64 overlapped = -1;
-		RAnalFunction *fcn1 = NULL;
 
 		// set function size as length of continuous sequence of bbs
 		r_list_sort (fcn->bbs, &cmpaddr);
 		r_list_foreach (fcn->bbs, iter, bb) {
 			if (endaddr == bb->addr) {
 				endaddr += bb->size;
-			} else if (endaddr < bb->addr &&
-			bb->addr - endaddr <
-			anal->opt.bbs_alignment &&
-			!(bb->addr &
-			(anal->opt.bbs_alignment - 1))) {
+			} else if (endaddr < bb->addr && bb->addr - endaddr < anal->opt.bbs_alignment && !(bb->addr & (anal->opt.bbs_alignment - 1))) {
 				endaddr = bb->addr + bb->size;
 			} else {
 				break;
@@ -1414,18 +1409,6 @@ R_API int r_anal_fcn(RAnal *anal, RAnalFunction *fcn, ut64 addr, ut8 *buf, ut64 
 		}
 #if !JAYRO_04
 		r_anal_fcn_resize (fcn, endaddr - fcn->addr);
-
-		// resize function if overlaps
-		r_list_foreach (anal->fcns, iter, fcn1) {
-			if (fcn1->addr >= (fcn->addr) && fcn1->addr < (fcn->addr + r_anal_fcn_size (fcn))) {
-				if (overlapped > fcn1->addr) {
-					overlapped = fcn1->addr;
-				}
-			}
-		}
-		if (overlapped != -1) {
-			r_anal_fcn_resize (fcn, overlapped - fcn->addr);
-		}
 #endif
 		r_anal_trim_jmprefs (fcn);
 	}

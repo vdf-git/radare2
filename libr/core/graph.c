@@ -157,6 +157,21 @@ static int mode2opts(const RAGraph *g) {
 	return opts;
 }
 
+// duplicated from visual.c
+static void rotateAsmemu(RCore *core) {
+	const bool isEmuStr = r_config_get_i (core->config, "asm.emu.str");
+	const bool isEmu = r_config_get_i (core->config, "asm.emu");
+	if (isEmu) {
+		if (isEmuStr) {
+			r_config_set (core->config, "asm.emu.str", "false");
+		} else {
+			r_config_set (core->config, "asm.emu", "false");
+		}
+	} else {
+		r_config_set (core->config, "asm.emu.str", "true");
+	}
+}
+
 static char *get_title(ut64 addr) {
 	return r_str_newf ("0x%"PFMT64x, addr);
 }
@@ -1921,8 +1936,8 @@ static char *get_body(RCore *core, ut64 addr, int size, int opts) {
 		return NULL;
 	}
 	r_config_save_num (hc, "asm.fcnlines", "asm.lines", "asm.bytes",
-		"asm.cmtcol", "asm.marks", "asm.marks", "asm.offset",
-		"asm.comments", "asm.cmtright", NULL);
+		"asm.cmt.col", "asm.marks", "asm.marks", "asm.offset",
+		"asm.comments", "asm.cmt.right", NULL);
 	const bool o_comments = r_config_get_i (core->config, "graph.comments");
 	const bool o_cmtright = r_config_get_i (core->config, "graph.cmtright");
 	int o_cursor = core->print->cur_enabled;
@@ -1932,9 +1947,9 @@ static char *get_body(RCore *core, ut64 addr, int size, int opts) {
 	// configure options
 	r_config_set_i (core->config, "asm.fcnlines", false);
 	r_config_set_i (core->config, "asm.lines", false);
-	r_config_set_i (core->config, "asm.cmtcol", 0);
+	r_config_set_i (core->config, "asm.cmt.col", 0);
 	r_config_set_i (core->config, "asm.marks", false);
-	r_config_set_i (core->config, "asm.cmtright", (opts & BODY_SUMMARY) || o_cmtright);
+	r_config_set_i (core->config, "asm.cmt.right", (opts & BODY_SUMMARY) || o_cmtright);
 	r_config_set_i (core->config, "asm.comments", (opts & BODY_SUMMARY) || o_comments);
 	core->print->cur_enabled = false;
 
@@ -3045,10 +3060,10 @@ static int agraph_print(RAGraph *g, int is_interactive, RCore *core, RAnalFuncti
 		(void) G (-g->can->sx + 1, -g->can->sy + 2);
 		int scr_utf8 = r_config_get_i (core->config, "scr.utf8");
 		int asm_bytes = r_config_get_i (core->config, "asm.bytes");
-		int asm_cmtright = r_config_get_i (core->config, "asm.cmtright");
+		int asm_cmt_right = r_config_get_i (core->config, "asm.cmt.right");
 		r_config_set_i (core->config, "scr.utf8", 0);
 		r_config_set_i (core->config, "asm.bytes", 0);
-		r_config_set_i (core->config, "asm.cmtright", 0);
+		r_config_set_i (core->config, "asm.cmt.right", 0);
 		char *str = r_core_cmd_str (core, "pd $r");
 		//r_cons_canvas_fill (g->can, -g->can->sx + title_len, -g->can->sy,
 		//		w - title_len, 1, ' ', true);
@@ -3056,7 +3071,7 @@ static int agraph_print(RAGraph *g, int is_interactive, RCore *core, RAnalFuncti
 		free (str);
 		r_config_set_i (core->config, "scr.utf8", scr_utf8);
 		r_config_set_i (core->config, "asm.bytes", asm_bytes);
-		r_config_set_i (core->config, "asm.cmtright", asm_cmtright);
+		r_config_set_i (core->config, "asm.cmt.right", asm_cmt_right);
 	}
 	if (preEdges) {
 		agraph_print_edges (g);
@@ -3463,6 +3478,7 @@ static void goto_asmqjmps(RAGraph *g, RCore *core) {
 		RANode *addr_node = r_agraph_get_node (g, title);
 		if (addr_node) {
 			r_agraph_set_curnode (g, addr_node);
+			r_core_seek (core, addr, 0);
 			agraph_update_seek (g, addr_node, true);
 		} else {
 			r_io_sundo_push (core->io, core->offset, 0);
@@ -3555,6 +3571,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 	RConsCanvas *can, *o_can = NULL;
 	bool graph_allocated = false;
 	int movspeed;
+	ut64 oldseek = core->offset;
 	int ret, invscroll;
 	RConfigHold *hc = r_config_hold_new (core->config);
 	if (!hc) {
@@ -3578,7 +3595,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 	can->linemode = r_config_get_i (core->config, "graph.linemode");
 	can->color = r_config_get_i (core->config, "scr.color");
 
-	r_config_save_num (hc, "asm.cmtright", NULL);
+	r_config_save_num (hc, "asm.cmt.right", NULL);
 	if (!g) {
 		graph_allocated = true;
 		fcn = _fcn? _fcn: r_anal_get_fcn_in (core->anal, core->offset, 0);
@@ -3661,7 +3678,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 		key = r_cons_arrow_to_hjkl (okey);
 
 		if (core->cons->mouse_event) {
-			movspeed = r_config_get_i (core->config, "scr.wheelspeed");
+			movspeed = r_config_get_i (core->config, "scr.wheel.speed");
 			switch (key) {
 			case 'j':
 			case 'k':
@@ -3677,18 +3694,25 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			movspeed = g->movspeed;
 		}
 		const char *cmd;
+		const int K = 920;
 		switch (key) {
 		case '-':
 			agraph_set_zoom (g, g->zoom - ZOOM_STEP);
-			agraph_update_seek (g, get_anode (g->curnode), true);
+				//		agraph_update_seek (g, get_anode (g->curnode), true);
+			// agraph_refresh (r_cons_singleton ()->event_data);
+			// agraph_update_seek (g, get_anode (g->curnode), false);
+			can->sy = (can->sy * K) / 1000;
 			break;
 		case '+':
 			agraph_set_zoom (g, g->zoom + ZOOM_STEP);
-			agraph_update_seek (g, get_anode (g->curnode), true);
+			can->sy = (can->sy * 1000) / K;
+			// agraph_update_seek (g, get_anode (g->curnode), false);
+			// agraph_update_seek (g, get_anode (g->curnode), true);
 			break;
 		case '0':
 			agraph_set_zoom (g, ZOOM_DEFAULT);
 			agraph_update_seek (g, get_anode (g->curnode), true);
+// update scroll (with minor shift)
 			break;
 		case '|':
 		{         // TODO: edit
@@ -3809,6 +3833,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				" _            - enter hud selector\n"
 				" >            - show function callgraph (see graph.refs)\n"
 				" <            - show program callgraph (see graph.refs)\n"
+				" )            - rotate asm.emu and asm.emu.str\n"
 				" Home/End     - go to the top/bottom of the canvas\n"
 				" Page-UP/DOWN - scroll canvas up/down\n"
 				" C            - toggle scr.colors\n"
@@ -3965,6 +3990,14 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			if (mousemode < 0) {
 				mousemode = 3;
 			}
+			break;
+		case '(':
+			r_core_cmd0 (core, "wao recj@B:-1");
+			g->need_reload_nodes = true;
+			break;
+		case ')':
+			rotateAsmemu (core);
+			g->need_reload_nodes = true;
 			break;
 		case 'd':
 			{
@@ -4131,9 +4164,15 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			r_config_set_i (core->config, "scr.interactive", false);
 			break;
 		case ':':
+			{
+			ut64 tempseek = core->offset;
 			r_core_visual_prompt_input (core);
 			get_bbupdate (g, core, fcn);
+			if (core->offset != tempseek) {
+				oldseek = core->offset;
+			}
 			break;
+			}
 		case 'w':
 			agraph_toggle_speed (g, core);
 			break;
@@ -4256,6 +4295,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 	} else {
 		g->can = o_can;
 	}
+	r_core_seek (core, oldseek, 0);
 	r_config_restore (hc);
 	r_config_hold_free (hc);
 	return !is_error;
